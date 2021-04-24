@@ -1,31 +1,39 @@
-import * as React from 'react';
-
-import { StyleSheet, View, Text } from 'react-native';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { useEffect } from 'react';
 import Queue from '@thevsstech/queue';
 
-export default function App() {
-  const [result, setResult] = React.useState<number | undefined>();
+const queue = Queue();
 
-  React.useEffect(() => {
-    Queue.multiply(3, 7).then(setResult);
+export default function App() {
+  useEffect(() => {
+    const data = async () => {
+      await queue.createJob(
+        'test',
+        { id: 1 },
+        { attempts: 1, timeout: 5000, priority: 100 }
+      );
+
+      await queue.createJob(
+        'test',
+        { id: 1 },
+        { attempts: 1, timeout: 5000, priority: 90 }
+      );
+
+      queue.addWorker(
+        'test',
+        (id, payload) => {
+          console.log(id, payload);
+        },
+        {
+          concurrency: 5,
+        }
+      );
+
+      await queue.start(20000);
+    };
+
+    data();
   }, []);
 
-  return (
-    <View style={styles.container}>
-      <Text>Result: {result}</Text>
-    </View>
-  );
+  return null;
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  box: {
-    width: 60,
-    height: 60,
-    marginVertical: 20,
-  },
-});

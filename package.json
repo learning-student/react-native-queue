@@ -149,5 +149,8 @@
         }
       ]
     ]
+  },
+  "dependencies": {
+    "promise-reflect": "^1.1.0"
   }
 }

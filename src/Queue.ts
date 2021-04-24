@@ -1,0 +1,373 @@
+import type { Job, JobOptions, WorkerCallback, WorkerOptions } from './types';
+import Worker from './Worker';
+import { uuid } from './Helpers';
+import {
+  addJob,
+  getConcurrentJobs,
+  getJobs,
+  markJobsAsActive,
+  removeJob,
+  removeJobs,
+  setJobs,
+  updateJob,
+} from './Storage';
+// @ts-ignore
+import promiseReflect from 'promise-reflect';
+
+export class Queue {
+  worker: Worker;
+  status: 'inactive' | 'active';
+
+  /**
+   *
+   * Set initial class properties.
+   *
+   * @constructor
+   */
+  constructor() {
+    this.worker = new Worker();
+    this.status = 'inactive';
+  }
+
+  /**
+   *
+   * Add a worker function to the queue.
+   *
+   * Worker will be called to execute jobs associated with jobName.
+   *
+   * Worker function will receive job id and job payload as parameters.
+   *
+   * Example:
+   *
+   * function exampleJobWorker(id, payload) {
+   *  console.log(id); // UUID of job.
+   *  console.log(payload); // Payload of data related to job.
+   * }
+   *
+   * @param jobName {string} - Name associated with jobs assigned to this worker.
+   * @param worker {function} - The worker function that will execute jobs.
+   * @param options {object} - Worker options. See README.md for worker options info.
+   */
+  addWorker(
+    jobName: string,
+    worker: WorkerCallback,
+    options: WorkerOptions = {}
+  ) {
+    this.worker.addWorker(jobName, worker, options);
+  }
+
+  /**
+   *
+   * Delete worker function from queue.
+   *
+   * @param jobName {string} - Name associated with jobs assigned to this worker.
+   */
+  removeWorker(jobName: string) {
+    this.worker.removeWorker(jobName);
+  }
+
+  /**
+   *
+   * Creates a new job and adds it to queue.
+   *
+   * Queue will automatically start processing unless startQueue param is set to false.
+   *
+   * @param name {string} - Name associated with job. The worker function assigned to this name will be used to execute this job.
+   * @param payload {object} - Object of arbitrary data to be passed into worker function when job executes.
+   * @param options {object} - Job related options like timeout etc. See README.md for job options info.
+   * @param startQueue - {boolean} - Whether or not to immediately begin prcessing queue. If false queue.start() must be manually called.
+   */
+  async createJob(
+    name: string,
+    payload = {},
+    options: JobOptions = {
+      attempts: 3,
+      timeout: 5000,
+      priority: 6,
+    },
+    startQueue = false
+  ) {
+    if (!name) {
+      throw new Error('Job name must be supplied.');
+    }
+
+    // Validate options
+    if (options.timeout < 0 || options.attempts < 0) {
+      throw new Error('Invalid job option.');
+    }
+
+    const jobObject: Job = {
+      id: uuid(),
+      name,
+      payload: JSON.stringify(payload),
+      data: JSON.stringify({
+        attempts: options.attempts || 1,
+      }),
+      attempts: options.attempts,
+      priority: options.priority || 0,
+      active: false,
+      timeout: options.timeout >= 0 ? options.timeout : 25000,
+      created: new Date(),
+      failed: false,
+    };
+
+    await addJob(jobObject);
+
+    // Start queue on job creation if it isn't running by default.
+    if (startQueue && this.status === 'inactive') {
+      this.start();
+    }
+  }
+
+  /**
+   *
+   * Start processing the queue.
+   *
+   * If queue was not started automatically during queue.createJob(), this
+   * method should be used to manually start the queue.
+   *
+   * If queue.start() is called again when queue is already running,
+   * queue.start() will return early with a false boolean value instead
+   * of running multiple queue processing loops concurrently.
+   *
+   * Lifespan can be passed to start() in order to run the queue for a specific amount of time before stopping.
+   * This is useful, as an example, for OS background tasks which typically are time limited.
+   *
+   * NOTE: If lifespan is set, only jobs with a timeout property at least 500ms less than remaining lifespan will be processed
+   * during queue processing lifespan. This is to buffer for the small amount of time required to query Realm for suitable
+   * jobs, and to mark such jobs as complete or failed when job finishes processing.
+   *
+   * IMPORTANT: Jobs with timeout set to 0 that run indefinitely will not be processed if the queue is running with a lifespan.
+   *
+   * @param lifespan {number} - If lifespan is passed, the queue will start up and run for lifespan ms, then queue will be stopped.
+   */
+  async start(lifespan: number = 0) {
+    // If queue is already running, don't fire up concurrent loop.
+    if (this.status == 'active') {
+      return;
+    }
+
+    this.status = 'active';
+
+    // Get jobs to process
+    const startTime = Date.now();
+    let lifespanRemaining = null;
+    let concurrentJobs = [];
+
+    if (lifespan !== 0) {
+      lifespanRemaining = lifespan - (Date.now() - startTime);
+      lifespanRemaining = lifespanRemaining === 0 ? -1 : lifespanRemaining; // Handle exactly zero lifespan remaining edge case.
+      concurrentJobs = await this.getConcurrentJobs(lifespanRemaining);
+    } else {
+      concurrentJobs = await this.getConcurrentJobs();
+    }
+
+    while (this.status === 'active' && concurrentJobs.length) {
+      // Loop over jobs and process them concurrently.
+      const processingJobs = concurrentJobs.map((job) => {
+        return this.processJob(job);
+      });
+
+      // Promise Reflect ensures all processingJobs resolve so
+      // we don't break await early if one of the jobs fails.
+      await Promise.all(processingJobs.map(promiseReflect));
+
+      // Get next batch of jobs.
+      if (lifespan !== 0) {
+        lifespanRemaining = lifespan - (Date.now() - startTime);
+        lifespanRemaining = lifespanRemaining === 0 ? -1 : lifespanRemaining; // Handle exactly zero lifespan remaining edge case.
+        concurrentJobs = await this.getConcurrentJobs(lifespanRemaining);
+      } else {
+        concurrentJobs = await this.getConcurrentJobs();
+      }
+    }
+
+    this.status = 'inactive';
+  }
+
+  /**
+   *
+   * Stop processing queue.
+   *
+   * If queue.stop() is called, queue will stop processing until
+   * queue is restarted by either queue.createJob() or queue.start().
+   *
+   */
+  stop() {
+    this.status = 'inactive';
+  }
+
+  /**
+   *
+   * Get a collection of all the jobs in the queue.
+   *
+   * @return {promise} - Promise that resolves to a collection of all the jobs in the queue.
+   */
+  async getJobs() {
+    return getJobs();
+  }
+
+  /**
+   *
+   * Get the next job(s) that should be processed by the queue.
+   *
+   * If the next job to be processed by the queue is associated with a
+   * worker function that has concurrency X > 1, then X related (jobs with same name)
+   * jobs will be returned.
+   *
+   * If queue is running with a lifespan, only jobs with timeouts at least 500ms < than REMAINING lifespan
+   * AND a set timeout (ie timeout > 0) will be returned. See Queue.start() for more info.
+   *
+   * @param queueLifespanRemaining {number} - The remaining lifespan of the current queue process (defaults to indefinite).
+   * @return {promise} - Promise resolves to an array of job(s) to be processed next by the queue.
+   */
+  async getConcurrentJobs(queueLifespanRemaining: number = 0): Promise<Job[]> {
+    // Build query string
+    // If queueLife
+    const timeoutUpperBound =
+      queueLifespanRemaining - 500 > 0 ? queueLifespanRemaining - 499 : 0; // Only get jobs with timeout at least 500ms < queueLifespanRemaining.
+
+    const jobs = await getConcurrentJobs(timeoutUpperBound, this.worker);
+
+    // Grab concurrent job ids to reselect jobs as marking these jobs as active will remove
+    // them from initial selection when write transaction exits.
+    // See: https://stackoverflow.com/questions/47359368/does-realm-support-select-for-update-style-read-locking/47363356#comment81772710_47363356
+    const concurrentJobIds = jobs.map((job) => job.id);
+    await markJobsAsActive(concurrentJobIds);
+
+    return jobs;
+  }
+
+  /**
+   *
+   * Process a job.
+   *
+   * Job lifecycle callbacks are called as appropriate throughout the job processing lifecycle.
+   *
+   * Job is deleted upon successful completion.
+   *
+   * If job fails execution via timeout or other exception, error will be
+   * logged to job.data.errors array and job will be reset to inactive status.
+   * Job will be re-attempted up to the specified "attempts" setting (defaults to 1),
+   * after which it will be marked as failed and not re-attempted further.
+   *
+   * @param job {object} - Job realm model object
+   */
+  async processJob(job: Job) {
+    // Data must be cloned off the realm job object for several lifecycle callbacks to work correctly.
+    // This is because realm job is deleted before some callbacks are called if job processed successfully.
+    // More info: https://github.com/billmalarky/react-native-queue/issues/2#issuecomment-361418965
+    const jobName = job.name;
+    const jobId = job.id;
+    const jobPayload = JSON.parse(job.payload);
+
+    // Fire onStart job lifecycle callback
+    this.worker.executeJobLifecycleCallback(
+      'onStart',
+      jobName,
+      jobId,
+      jobPayload
+    );
+
+    try {
+      await this.worker.executeJob(job);
+      await removeJob(job.id);
+
+      // Job has processed successfully, fire onSuccess and onComplete job lifecycle callbacks.
+      this.worker.executeJobLifecycleCallback(
+        'onSuccess',
+        jobName,
+        jobId,
+        jobPayload
+      );
+
+      this.worker.executeJobLifecycleCallback(
+        'onComplete',
+        jobName,
+        jobId,
+        jobPayload
+      );
+    } catch (error) {
+      // Handle job failure logic, including retries.
+      let jobData = JSON.parse(job.data);
+
+      // Increment failed attempts number
+      if (!jobData.failedAttempts) {
+        jobData.failedAttempts = 1;
+      } else {
+        jobData.failedAttempts++;
+      }
+
+      // Log error
+      if (!jobData.errors) {
+        jobData.errors = [error.message];
+      } else {
+        jobData.errors.push(error.message);
+      }
+
+      job.data = JSON.stringify(jobData);
+
+      // Reset active status
+      job.active = false;
+
+      // Mark job as failed if too many attempts
+      if (jobData.failedAttempts >= jobData.attempts) {
+        job.failed = new Date();
+      }
+
+      await updateJob(job.id, job);
+
+      // Execute job onFailure lifecycle callback.
+      this.worker.executeJobLifecycleCallback(
+        'onFailure',
+        jobName,
+        jobId,
+        jobPayload
+      );
+
+      // If job has failed all attempts execute job onFailed and onComplete lifecycle callbacks.
+      if (jobData.failedAttempts >= jobData.attempts) {
+        this.worker.executeJobLifecycleCallback(
+          'onFailed',
+          jobName,
+          jobId,
+          jobPayload
+        );
+        this.worker.executeJobLifecycleCallback(
+          'onComplete',
+          jobName,
+          jobId,
+          jobPayload
+        );
+      }
+    }
+  }
+
+  /**
+   *
+   * Delete jobs in the queue.
+   *
+   * If jobName is supplied, only jobs associated with that name
+   * will be deleted. Otherwise all jobs in queue will be deleted.
+   *
+   * @param jobName {string} - Name associated with job (and related job worker).
+   */
+  async flushQueue(jobName = null) {
+    if (jobName !== null) {
+      // @ts-ignore
+      await removeJobs(jobName);
+    } else {
+      await setJobs([]);
+    }
+  }
+}
+
+/**
+ *
+ * Factory should be used to create a new queue instance.
+ *
+ * @return {Queue} - A queue instance.
+ */
+export default function queueFactory(): Queue {
+  return new Queue();
+}
