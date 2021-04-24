@@ -1,5 +1,5 @@
 {
-  "name": "@thevsstech/queue",
+  "name": "@thevsstech/react-native-queue",
   "version": "0.1.0",
   "description": "React native queue library",
   "main": "lib/commonjs/index",
