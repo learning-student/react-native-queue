@@ -56,8 +56,9 @@ export const filterJobs = (jobs: Job[], queueLifespanRemaining: number) => {
     return (
       !job.active &&
       job.failed === false &&
-      job.timeout > 0 &&
-      job.timeout < queueLifespanRemaining
+      (queueLifespanRemaining > 0
+        ? job.timeout > 0 && job.timeout < queueLifespanRemaining
+        : true)
     );
   });
 };
@@ -65,14 +66,14 @@ export const filterJobs = (jobs: Job[], queueLifespanRemaining: number) => {
 export const filterRelatedJobs = (
   jobs: Job[],
   name: string,
-  concurrency: number = 8
+  concurrency: number = 8,
 ): Job[] => {
   return jobs.filter((job) => job.name === name).slice(0, concurrency);
 };
 
 export const getConcurrentJobs = async (
   queueLifespanRemaining: number = 0,
-  worker: Worker
+  worker: Worker,
 ): Promise<Job[]> => {
   let jobs = await getJobs();
 
@@ -115,6 +116,6 @@ export const markJobsAsActive = async (jobIds: string[]) => {
     return job;
   });
 
-  console.log("marked", jobs);
+  console.log('marked', jobs);
   return setJobs(jobs);
 };
