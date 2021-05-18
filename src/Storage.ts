@@ -66,22 +66,16 @@ export const filterJobs = (jobs: Job[], queueLifespanRemaining: number) => {
 export const filterRelatedJobs = (
   jobs: Job[],
   name: string,
-  concurrency: number = 8,
+  concurrency: number = 8
 ): Job[] => {
   return jobs.filter((job) => job.name === name).slice(0, concurrency);
 };
 
 export const getConcurrentJobs = async (
   queueLifespanRemaining: number = 0,
-  worker: Worker,
+  worker: Worker
 ): Promise<Job[]> => {
   let jobs = await getJobs();
-
-  console.log('all jobs', jobs);
-  // sort jobs by priority
-  jobs = jobs.sort((a, b) => {
-    return b.priority - a.priority;
-  });
 
   // sort jobs by created at date
   jobs = jobs.sort((a, b) => {
@@ -92,6 +86,10 @@ export const getConcurrentJobs = async (
     return bCreatedAt - aCreatedAt;
   });
 
+  // sort jobs by priority
+  jobs = jobs.sort((a, b) => {
+    return b.priority - a.priority;
+  });
 
   const allJobs = filterJobs(jobs, queueLifespanRemaining);
 
