@@ -84,6 +84,7 @@ export class Queue {
       attempts: 3,
       timeout: 5000,
       priority: 6,
+      waitBeforeRetry: 2000,
     },
     startQueue = false
   ) {
@@ -106,6 +107,7 @@ export class Queue {
       attempts: options.attempts,
       priority: options.priority || 0,
       active: false,
+      waitBeforeRetry: options.waitBeforeRetry,
       timeout: options.timeout >= 0 ? options.timeout : 25000,
       created: new Date(),
       failed: false,

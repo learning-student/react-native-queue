@@ -7,6 +7,7 @@ export type WorkerLifeCycleFunctions = {
   onFailed?: WorkerCallback;
   onComplete?: WorkerCallback;
 };
+
 export interface WorkerOptions extends WorkerLifeCycleFunctions {
   concurrency?: number;
 }
@@ -26,4 +27,5 @@ export type JobOptions = {
   attempts: number;
   priority: number;
   timeout: number;
+  waitBeforeRetry ?: number;
 }

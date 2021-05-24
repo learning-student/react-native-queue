@@ -9,6 +9,7 @@ import type {
   WorkerLifeCycleFunctions,
   WorkerOptions,
 } from './types';
+import { sleep } from './Helpers';
 
 export default class Worker {
   /**
@@ -118,6 +119,8 @@ export default class Worker {
     const jobName = job.name;
     const jobTimeout = job.timeout;
     const jobPayload = JSON.parse(job.payload);
+    const waitBeforeRetry = job.waitBeforeRetry;
+    let jobData = JSON.parse(job.data);
 
     if (jobTimeout > 0) {
       let timeoutPromise = new Promise((_resolve, reject) => {
@@ -133,6 +136,12 @@ export default class Worker {
           );
         }, jobTimeout);
       });
+
+      // if this job failed before
+      // sleep for given time
+      if (jobData.failedAttempts && waitBeforeRetry) {
+        await sleep(waitBeforeRetry);
+      }
 
       await Promise.race([
         timeoutPromise,

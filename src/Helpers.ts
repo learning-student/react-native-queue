@@ -5,3 +5,11 @@ export function uuid() {
     return v.toString(16);
   });
 }
+
+export function sleep(time: number = 0) {
+  return new Promise<void>((resolve) => {
+    setTimeout(function () {
+      resolve();
+    }, time);
+  });
+}
