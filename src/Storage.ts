@@ -1,5 +1,6 @@
 import type { Job } from './types';
-import AsyncStorage from '@react-native-community/async-storage';
+// @ts-ignore
+import AsyncStorage from  '@react-native-community/async-storage';
 import type Worker from './Worker';
 
 export const addJob = async (payload: Job): Promise<Job[]> => {

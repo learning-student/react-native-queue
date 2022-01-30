@@ -289,7 +289,7 @@ export class Queue {
         jobId,
         jobPayload
       );
-    } catch (error) {
+    } catch (error: any) {
       // Handle job failure logic, including retries.
       let jobData = JSON.parse(job.data);
 
