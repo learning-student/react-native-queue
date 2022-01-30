@@ -145,10 +145,10 @@ export default class Worker {
 
       await Promise.race([
         timeoutPromise,
-        Worker.workers[jobName].callback(jobId, jobPayload),
+        Worker.workers[jobName].callback(jobId, jobPayload, job),
       ]);
     } else {
-      await Worker.workers[jobName].callback(jobId, jobPayload);
+      await Worker.workers[jobName].callback(jobId, jobPayload, job);
     }
   }
 

@@ -1,4 +1,4 @@
-export type WorkerCallback = (id: string, payload: any) => void;
+export type WorkerCallback = (id: string, payload: any, job : Job) => void;
 
 export type WorkerLifeCycleFunctions = {
   onStart?: WorkerCallback;
